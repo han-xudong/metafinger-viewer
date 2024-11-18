@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+// Namespace
+package Robot;
+
+message Robot
+{
+    double timestamp = 1;
+    repeated double joint_angles = 2;
+    repeated double pose = 3;
+    bytes img = 4;
+}

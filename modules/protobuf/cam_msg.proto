@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+// Namespace
+package Camera;
+
+message Camera
+{
+    double timestamp = 1;
+    repeated double pose = 2;
+    bytes img = 3;
+}

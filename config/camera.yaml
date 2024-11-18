@@ -1,0 +1,10 @@
+rsd435i:
+  name: "camera"
+  type: "realsense"
+  device: "d435i"
+  width: 1280
+  height: 720
+  fps: 30
+  depth: false
+  color: true
+  color_intrinsics: [919.606, 917.293, 665.883, 373.948]
