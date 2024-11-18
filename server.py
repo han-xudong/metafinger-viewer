@@ -47,7 +47,7 @@ class FingerSubscriber:
         self.img = None
 
     def receive_message(self):
-        finger = finger_msg_pb2.Finger()
+        finger = cam_msg_pb2.Finger()
         finger.ParseFromString(self.subscriber.recv())
 
         self.timestamp = finger.timestamp
@@ -107,30 +107,36 @@ class RobotVis:
     def log_camera(
         self,
         color_imgs: dict[str, np.ndarray],
-        color_position: dict[str, np.ndarray],
-        color_intrinsics: dict[str, np.ndarray],
+        color_position: dict[str, np.ndarray]={},
+        color_intrinsics: dict[str, np.ndarray]={},
     ):
-        for cam in self.cam_dict.keys():
-            color_extrinsic = color_position[cam]
-            color_intrinsic = color_intrinsics[cam]
-            color_img = color_imgs[cam]
-            if color_img is not None:
-                rr.log(
-                    f"/cameras/{cam}/color",
-                    rr.Pinhole(
-                        image_from_camera=color_intrinsic,
-                    ),
-                )
-                rr.log(
-                    f"/cameras/{cam}/color",
-                    rr.Transform3D(
-                        translation=np.array(color_extrinsic[:3]),
-                        mat3x3=Rotation.from_euler(
-                            "xyz", np.array(color_extrinsic[3:])
-                        ).as_matrix(),
-                    ),
-                )
-                rr.log(f"/cameras/{cam}/color", rr.Image(color_img))
+        if color_position == {}:
+            for cam in self.cam_dict.keys():
+                color_img = color_imgs[cam]
+                if color_img is not None:
+                    rr.log(f"/cameras/{cam}/color", rr.Image(color_img))
+        else:
+            for cam in self.cam_dict.keys():
+                color_extrinsic = color_position[cam]
+                color_intrinsic = color_intrinsics[cam]
+                color_img = color_imgs[cam]
+                if color_img is not None:
+                    rr.log(
+                        f"/cameras/{cam}/color",
+                        rr.Pinhole(
+                            image_from_camera=color_intrinsic,
+                        ),
+                    )
+                    rr.log(
+                        f"/cameras/{cam}/color",
+                        rr.Transform3D(
+                            translation=np.array(color_extrinsic[:3]),
+                            mat3x3=Rotation.from_euler(
+                                "xyz", np.array(color_extrinsic[3:])
+                            ).as_matrix(),
+                        ),
+                    )
+                    rr.log(f"/cameras/{cam}/color", rr.Image(color_img))
 
     def log_finger(
         self,
@@ -141,113 +147,154 @@ class RobotVis:
     def log_action_dict(
         self,
         pose: np.ndarray = np.array([0, 0, 0, 0, 0, 0]),
-        joint_velocities: np.ndarray = np.array([0, 0, 0, 0, 0, 0]),
     ):
 
         for i, val in enumerate(pose):
             rr.log(f"/action_dict/pose/{i}", rr.Scalar(val))
 
-        for i, vel in enumerate(joint_velocities):
-            rr.log(f"/action_dict/joint_velocity/{i}", rr.Scalar(vel))
-
     def run(
         self,
         record_state,
-        robot,
         entity_to_transform=None,
     ):
         with open("../config/address.yaml", "r") as f:
             address = yaml.load(f.read(), Loader=yaml.Loader)
         
-        if robot =="finger":
+        if self.robot =="finger":
             subscriber = FingerSubscriber(address=address["finger"])
-        left_finger_subscriber = FingerSubscriber(address=address["left_finger"])
-        right_finger_subscriber = FingerSubscriber(address=address["right_finger"])
-        robot_subscriber = RobotSubscriber(address=address["robot"])
 
-        joint_angles = np.zeros(6)
-        self.log_robot_states(joint_angles, entity_to_transform)
-        color_intrinsics = {
-            cam: cam_intr_to_mat(self.cam_dict[cam]["color_intrinsics"])
-            for cam in self.cam_dict.keys()
-        }
-        recording = False
-        time_list = []
-        joint_angles_list = []
-        pose_list = []
-        color_position_list = []
-        count = 0
-        while True:
-            subscriber.receive_message()
-            joint_angles = subscriber.joint_angles
-            pose = subscriber.pose
-            img = subscriber.img
-            color_position = subscriber.color_position
-            self.log_robot_states(joint_angles, entity_to_transform)
-            self.log_camera(
-                color_imgs={cam: img for cam in self.cam_dict},
-                color_position={cam: color_position for cam in self.cam_dict},
-                color_intrinsics=color_intrinsics,
-            )
-            self.log_action_dict(pose=pose, joint_velocities=joint_velocities)
-            if record_state.value == 1:
-                if recording == False:
-                    start_time = time.time()
-                    recording = True
-                    save_path = os.path.join("../data/", time.strftime("%Y%m%d-%H%M%S"))
-                    os.makedirs(save_path)
-                    os.makedirs(os.path.join(save_path, "color_img"))
-                time_list.append(time.time() - start_time)
-                joint_angles_list.append(joint_angles)
-                joint_velocities_list.append(joint_velocities)
-                pose_list.append(pose)
-                color_position_list.append(color_position)
-                cv2.imwrite(
-                    os.path.join(save_path, f"color_img/frame_{count}.png"),
-                    cv2.cvtColor(img, cv2.COLOR_RGB2BGR),
+            color_intrinsics = {
+                cam: cam_intr_to_mat(self.cam_dict[cam]["color_intrinsics"])
+                for cam in self.cam_dict.keys()
+            }
+            recording = False
+            time_list = []
+            finger_pose_list = []
+            count = 0
+            while True:
+                subscriber.receive_message()
+                pose = subscriber.pose
+                img = subscriber.img
+                self.log_finger(pose)
+                self.log_camera(
+                    color_imgs={cam: img for cam in self.cam_dict},
+                    color_intrinsics=color_intrinsics,
                 )
-                count += 1
-                print(f"Saving, fps: {count/(time.time() - start_time)}", end="\r")
-            else:
-                if recording == True:
-                    recording = False
-                    np.savetxt(
-                        os.path.join(save_path, "time.csv"),
-                        time_list,
-                        delimiter=",",
-                        fmt="%.6f",
+                self.log_action_dict(pose=pose)
+                if record_state.value == 1:
+                    if recording == False:
+                        start_time = time.time()
+                        recording = True
+                        save_path = os.path.join("../data/", time.strftime("%Y%m%d-%H%M%S"))
+                        os.makedirs(save_path)
+                        os.makedirs(os.path.join(save_path, "color_img"))
+                    time_list.append(time.time() - start_time)
+                    finger_pose_list.append(pose)
+                    cv2.imwrite(
+                        os.path.join(save_path, f"color_img/frame_{count}.png"),
+                        cv2.cvtColor(img, cv2.COLOR_RGB2BGR),
                     )
-                    np.savetxt(
-                        os.path.join(save_path, "joint_angles.csv"),
-                        joint_angles_list,
-                        delimiter=",",
-                        fmt="%.6f",
+                    count += 1
+                    print(f"Saving, fps: {count/(time.time() - start_time)}", end="\r")
+                else:
+                    if recording == True:
+                        recording = False
+                        np.savetxt(
+                            os.path.join(save_path, "time.csv"),
+                            time_list,
+                            delimiter=",",
+                            fmt="%.6f",
+                        )
+                        np.savetxt(
+                            os.path.join(save_path, "pose.csv"),
+                            finger_pose_list,
+                            delimiter=",",
+                            fmt="%.6f",
+                        )
+                        print(f"Data saved to {save_path}")
+                        time_list = []
+                        finger_pose_list = []
+                        count = 0
+        else:
+            left_finger_subscriber = FingerSubscriber(address=address["left_finger"])
+            right_finger_subscriber = FingerSubscriber(address=address["right_finger"])
+            robot_subscriber = RobotSubscriber(address=address["robot"])
+
+            joint_angles = np.zeros(6)
+            self.log_robot_states(joint_angles, entity_to_transform)
+        
+            color_intrinsics = {
+                cam: cam_intr_to_mat(self.cam_dict[cam]["color_intrinsics"])
+                for cam in self.cam_dict.keys()
+            }
+            recording = False
+            time_list = []
+            joint_angles_list = []
+            left_finger_pose_list = []
+            right_finger_pose_list = []
+            pose_list = []
+            count = 0
+            while True:
+                subscriber.receive_message()
+                joint_angles = subscriber.joint_angles
+                pose = subscriber.pose
+                img = subscriber.img
+                self.log_robot_states(joint_angles, entity_to_transform)
+                self.log_camera(
+                    color_imgs={cam: img for cam in self.cam_dict},
+                    color_intrinsics=color_intrinsics,
+                )
+                self.log_action_dict(pose=pose)
+                if record_state.value == 1:
+                    if recording == False:
+                        start_time = time.time()
+                        recording = True
+                        save_path = os.path.join("../data/", time.strftime("%Y%m%d-%H%M%S"))
+                        os.makedirs(save_path)
+                        os.makedirs(os.path.join(save_path, "color_img"))
+                    time_list.append(time.time() - start_time)
+                    joint_angles_list.append(joint_angles)
+                    pose_list.append(pose)
+                    color_position_list.append(color_position)
+                    cv2.imwrite(
+                        os.path.join(save_path, f"color_img/frame_{count}.png"),
+                        cv2.cvtColor(img, cv2.COLOR_RGB2BGR),
                     )
-                    np.savetxt(
-                        os.path.join(save_path, "joint_velocities.csv"),
-                        joint_velocities_list,
-                        delimiter=",",
-                        fmt="%.6f",
-                    )
-                    np.savetxt(
-                        os.path.join(save_path, "pose.csv"),
-                        pose_list,
-                        delimiter=",",
-                        fmt="%.6f",
-                    )
-                    np.savetxt(
-                        os.path.join(save_path, "color_position.csv"),
-                        color_position_list,
-                        delimiter=",",
-                        fmt="%.6f",
-                    )
-                    print(f"Data saved to {save_path}")
-                    time_list = []
-                    joint_angles_list = []
-                    joint_velocities_list = []
-                    pose_list = []
-                    color_position_list = []
-                    count = 0
+                    count += 1
+                    print(f"Saving, fps: {count/(time.time() - start_time)}", end="\r")
+                else:
+                    if recording == True:
+                        recording = False
+                        np.savetxt(
+                            os.path.join(save_path, "time.csv"),
+                            time_list,
+                            delimiter=",",
+                            fmt="%.6f",
+                        )
+                        np.savetxt(
+                            os.path.join(save_path, "joint_angles.csv"),
+                            joint_angles_list,
+                            delimiter=",",
+                            fmt="%.6f",
+                        )
+                        np.savetxt(
+                            os.path.join(save_path, "pose.csv"),
+                            pose_list,
+                            delimiter=",",
+                            fmt="%.6f",
+                        )
+                        np.savetxt(
+                            os.path.join(save_path, "color_position.csv"),
+                            color_position_list,
+                            delimiter=",",
+                            fmt="%.6f",
+                        )
+                        print(f"Data saved to {save_path}")
+                        time_list = []
+                        joint_angles_list = []
+                        pose_list = []
+                        color_position_list = []
+                        count = 0
 
     def log(
         self,
@@ -395,11 +442,11 @@ def rerun_server(
     rr.send_blueprint(robot_vis.blueprint(robot))
 
     if robot == "finger":
-        robot_vis.run(record_state, robot)
-    urdf_logger = URDFLogger(filepath=robot_urdf)
-    urdf_logger.log()
-
-    robot_vis.run(record_state, urdf_logger.entity_to_transform)
+        robot_vis.run(record_state)
+    else:
+        urdf_logger = URDFLogger(filepath=robot_urdf)
+        urdf_logger.log()
+        robot_vis.run(record_state, urdf_logger.entity_to_transform)
 
 
 def web_server(
