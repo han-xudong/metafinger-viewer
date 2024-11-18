@@ -191,7 +191,7 @@ class RobotVis:
                     if recording == False:
                         start_time = time.time()
                         recording = True
-                        save_path = os.path.join("../data/", time.strftime("%Y%m%d-%H%M%S"))
+                        save_path = os.path.join('../data/{}_'.format(self.robot), time.strftime("%Y%m%d-%H%M%S"))
                         os.makedirs(save_path)
                         os.makedirs(os.path.join(save_path, "img"))
                     time_list.append(time.time() - start_time)
@@ -255,7 +255,7 @@ class RobotVis:
                     if recording == False:
                         start_time = time.time()
                         recording = True
-                        save_path = os.path.join("../data/", time.strftime("%Y%m%d-%H%M%S"))
+                        save_path = os.path.join('../data/{}_'.format(self.robot), time.strftime("%Y%m%d-%H%M%S"))
                         os.makedirs(save_path)
                         os.makedirs(os.path.join(save_path, "img"))
                     time_list.append(time.time() - start_time)
