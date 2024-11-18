@@ -292,13 +292,23 @@ class RobotVis:
                             time.strftime("%Y%m%d-%H%M%S"),
                         )
                         os.makedirs(save_path)
-                        os.makedirs(os.path.join(save_path, "img"))
+                        os.makedirs(os.path.join(save_path, "left_finger_img"))
+                        os.makedirs(os.path.join(save_path, "right_finger_img"))
+                        os.makedirs(os.path.join(save_path, "robot_img"))
                     time_list.append(time.time() - start_time)
                     joint_angles_list.append(joint_angles)
                     robot_pose_list.append(pose)
                     cv2.imwrite(
-                        os.path.join(save_path, f"img/{count}.jpg"),
-                        cv2.cvtColor(img, cv2.COLOR_RGB2BGR),
+                        os.path.join(save_path, f"left_finger_img/{count}.jpg"),
+                        cv2.cvtColor(left_finger_img, cv2.COLOR_RGB2BGR),
+                    )
+                    cv2.imwrite(
+                        os.path.join(save_path, f"right_finger_img/{count}.jpg"),
+                        cv2.cvtColor(right_finger_img, cv2.COLOR_RGB2BGR),
+                    )
+                    cv2.imwrite(
+                        os.path.join(save_path, f"robot_img/{count}.jpg"),
+                        cv2.cvtColor(robot_img, cv2.COLOR_RGB2BGR),
                     )
                     count += 1
                     print(f"Saving, fps: {count/(time.time() - start_time)}", end="\r")
@@ -314,6 +324,18 @@ class RobotVis:
                         np.savetxt(
                             os.path.join(save_path, "joint_angles.csv"),
                             joint_angles_list,
+                            delimiter=",",
+                            fmt="%.6f",
+                        )
+                        np.savetxt(
+                            os.path.join(save_path, "left_finger_pose.csv"),
+                            left_finger_pose_list,
+                            delimiter=",",
+                            fmt="%.6f",
+                        )
+                        np.savetxt(
+                            os.path.join(save_path, "right_finger_pose.csv"),
+                            right_finger_pose_list,
                             delimiter=",",
                             fmt="%.6f",
                         )
