@@ -14,6 +14,7 @@ import contextlib
 import zmq
 import cv2
 import numpy as np
+from pynput import keyboard
 from rerun_loader_urdf import URDFLogger
 from scipy.spatial.transform import Rotation
 from modules import cam_msg_pb2, robot_msg_pb2
@@ -28,6 +29,11 @@ from functools import partial
 from multiprocessing import Process, Value
 import rerun as rr
 
+def on_press(key):
+    global stop_flag
+    if key == keyboard.Key.esc:
+        stop_flag = True
+        return False
 
 class DualStackServer(ThreadingHTTPServer):
     def server_bind(self):
@@ -255,7 +261,6 @@ class RobotVis:
                     time_list.append(time.time() - start_time)
                     joint_angles_list.append(joint_angles)
                     pose_list.append(pose)
-                    color_position_list.append(color_position)
                     cv2.imwrite(
                         os.path.join(save_path, f"color_img/frame_{count}.png"),
                         cv2.cvtColor(img, cv2.COLOR_RGB2BGR),
@@ -532,6 +537,11 @@ def main(
         )
         rerun_process.daemon = True
         rerun_process.start()
+
+        global stop_flag
+        while True:
+            if stop_flag and record_state.value == 0:
+                return
 
     elif mode == "log-data":
         data_path = os.path.join("../data/", data_folder)
