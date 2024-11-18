@@ -112,21 +112,21 @@ class RobotVis:
 
     def log_camera(
         self,
-        color_imgs: dict[str, np.ndarray],
+        imgs: dict[str, np.ndarray],
         color_position: dict[str, np.ndarray]={},
-        color_intrinsics: dict[str, np.ndarray]={},
+        intrinsics: dict[str, np.ndarray]={},
     ):
         if color_position == {}:
             for cam in self.cam_dict.keys():
-                color_img = color_imgs[cam]
-                if color_img is not None:
-                    rr.log(f"/cameras/{cam}/color", rr.Image(color_img))
+                img = imgs[cam]
+                if img is not None:
+                    rr.log(f"/cameras/{cam}/color", rr.Image(img))
         else:
             for cam in self.cam_dict.keys():
                 color_extrinsic = color_position[cam]
-                color_intrinsic = color_intrinsics[cam]
-                color_img = color_imgs[cam]
-                if color_img is not None:
+                color_intrinsic = intrinsics[cam]
+                img = imgs[cam]
+                if img is not None:
                     rr.log(
                         f"/cameras/{cam}/color",
                         rr.Pinhole(
@@ -142,7 +142,7 @@ class RobotVis:
                             ).as_matrix(),
                         ),
                     )
-                    rr.log(f"/cameras/{cam}/color", rr.Image(color_img))
+                    rr.log(f"/cameras/{cam}/color", rr.Image(img))
 
     def log_finger(
         self,
@@ -169,8 +169,8 @@ class RobotVis:
         if self.robot =="finger":
             subscriber = FingerSubscriber(address=address["finger"])
 
-            color_intrinsics = {
-                cam: cam_intr_to_mat(self.cam_dict[cam]["color_intrinsics"])
+            intrinsics = {
+                cam: cam_intr_to_mat(self.cam_dict[cam]["intrinsics"])
                 for cam in self.cam_dict.keys()
             }
             recording = False
@@ -183,8 +183,8 @@ class RobotVis:
                 img = subscriber.img
                 self.log_finger(pose)
                 self.log_camera(
-                    color_imgs={cam: img for cam in self.cam_dict},
-                    color_intrinsics=color_intrinsics,
+                    imgs={"finger": img},
+                    intrinsics={"finger": intrinsics["left_finger"]},
                 )
                 self.log_action_dict(pose=pose)
                 if record_state.value == 1:
@@ -193,11 +193,11 @@ class RobotVis:
                         recording = True
                         save_path = os.path.join("../data/", time.strftime("%Y%m%d-%H%M%S"))
                         os.makedirs(save_path)
-                        os.makedirs(os.path.join(save_path, "color_img"))
+                        os.makedirs(os.path.join(save_path, "img"))
                     time_list.append(time.time() - start_time)
                     finger_pose_list.append(pose)
                     cv2.imwrite(
-                        os.path.join(save_path, f"color_img/frame_{count}.png"),
+                        os.path.join(save_path, f"img/{count}.jpg"),
                         cv2.cvtColor(img, cv2.COLOR_RGB2BGR),
                     )
                     count += 1
@@ -229,8 +229,8 @@ class RobotVis:
             joint_angles = np.zeros(6)
             self.log_robot_states(joint_angles, entity_to_transform)
         
-            color_intrinsics = {
-                cam: cam_intr_to_mat(self.cam_dict[cam]["color_intrinsics"])
+            intrinsics = {
+                cam: cam_intr_to_mat(self.cam_dict[cam]["intrinsics"])
                 for cam in self.cam_dict.keys()
             }
             recording = False
@@ -247,8 +247,8 @@ class RobotVis:
                 img = subscriber.img
                 self.log_robot_states(joint_angles, entity_to_transform)
                 self.log_camera(
-                    color_imgs={cam: img for cam in self.cam_dict},
-                    color_intrinsics=color_intrinsics,
+                    imgs={cam: img for cam in self.cam_dict},
+                    intrinsics=intrinsics,
                 )
                 self.log_action_dict(pose=pose)
                 if record_state.value == 1:
@@ -257,12 +257,12 @@ class RobotVis:
                         recording = True
                         save_path = os.path.join("../data/", time.strftime("%Y%m%d-%H%M%S"))
                         os.makedirs(save_path)
-                        os.makedirs(os.path.join(save_path, "color_img"))
+                        os.makedirs(os.path.join(save_path, "img"))
                     time_list.append(time.time() - start_time)
                     joint_angles_list.append(joint_angles)
                     pose_list.append(pose)
                     cv2.imwrite(
-                        os.path.join(save_path, f"color_img/frame_{count}.png"),
+                        os.path.join(save_path, f"img/{count}.jpg"),
                         cv2.cvtColor(img, cv2.COLOR_RGB2BGR),
                     )
                     count += 1
@@ -311,8 +311,8 @@ class RobotVis:
         color_position_list,
         entity_to_transform: dict[str, tuple[np.ndarray, np.ndarray]],
     ):
-        color_intrinsics = {
-            cam: cam_intr_to_mat(self.cam_dict[cam]["color_intrinsics"])
+        intrinsics = {
+            cam: cam_intr_to_mat(self.cam_dict[cam]["intrinsics"])
             for cam in self.cam_dict.keys()
         }
 
@@ -322,11 +322,11 @@ class RobotVis:
             if (time.time() - start_time) > time_list[frame]:
                 self.log_robot_states(joint_angles_list[frame], entity_to_transform)
                 self.log_camera(
-                    color_imgs={cam: img_list[frame] for cam in self.cam_dict},
+                    imgs={cam: img_list[frame] for cam in self.cam_dict},
                     color_position={
                         cam: color_position_list[frame] for cam in self.cam_dict
                     },
-                    color_intrinsics=color_intrinsics,
+                    intrinsics=intrinsics,
                 )
                 self.log_action_dict(
                     pose=pose_list[frame],
@@ -402,10 +402,10 @@ def rerun_log(
         os.path.join(data_path, "joint_velocities.csv"), delimiter=","
     )
     pose_list = np.loadtxt(os.path.join(data_path, "pose.csv"), delimiter=",")
-    img_path = os.path.join(data_path, "color_img")
+    img_path = os.path.join(data_path, "img")
     img_list = [
         cv2.cvtColor(
-            cv2.imread(os.path.join(img_path, f"frame_{i}.png")),
+            cv2.imread(os.path.join(img_path, f"{i}.jpg")),
             cv2.COLOR_BGR2RGB,
         )
         for i in range(joint_angles_list.shape[0])

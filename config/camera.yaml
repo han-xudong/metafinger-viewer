@@ -1,9 +1,29 @@
-rsd435i:
-  name: "camera"
-  type: "realsense"
-  device: "d435i"
-  width: 1280
-  height: 720
+left_finger:
+  name: "left_finger"
+  type: "monocular"
+  device: "raspberrypi"
+  width: 640
+  height: 360
+  fps: 30
+  depth: false
+  color: true
+  color_intrinsics: [919.606, 917.293, 665.883, 373.948]
+right_finger:
+  name: "right_finger"
+  type: "monocular"
+  device: "raspberrypi"
+  width: 640
+  height: 360
+  fps: 30
+  depth: false
+  color: true
+  color_intrinsics: [919.606, 917.293, 665.883, 373.948]
+robot:
+  name: "robot"
+  type: "monocular"
+  device: "usb"
+  width: 640
+  height: 360
   fps: 30
   depth: false
   color: true
