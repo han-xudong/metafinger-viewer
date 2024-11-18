@@ -36,6 +36,26 @@ class DualStackServer(ThreadingHTTPServer):
             self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
         return super().server_bind()
 
+class FingerSubscriber:
+    def __init__(self, address: str) -> None:
+        self.context = zmq.Context()
+        self.subscriber = self.context.socket(zmq.SUB)
+        self.subscriber.connect(address)
+        self.subscriber.setsockopt_string(zmq.SUBSCRIBE, "")
+        self.timestamp = 0
+        self.pose = np.zeros(6)
+        self.img = None
+
+    def receive_message(self):
+        finger = finger_msg_pb2.Finger()
+        finger.ParseFromString(self.subscriber.recv())
+
+        self.timestamp = finger.timestamp
+        self.pose = np.array(finger.pose).flatten()
+        self.img = cv2.cvtColor(
+            cv2.imdecode(np.frombuffer(finger.img, np.uint8), cv2.IMREAD_COLOR),
+            cv2.COLOR_BGR2RGB,
+        )
 
 class RobotSubscriber:
     def __init__(self, address: str) -> None:
@@ -43,43 +63,29 @@ class RobotSubscriber:
         self.subscriber = self.context.socket(zmq.SUB)
         self.subscriber.connect(address)
         self.subscriber.setsockopt_string(zmq.SUBSCRIBE, "")
+        self.timestamp = 0
         self.joint_angles = np.zeros(6)
-        self.joint_velocities = np.zeros(6)
-        self.tcp_pose = np.zeros(6)
-        self.color_image = None
-        self.color_position = np.zeros(6)
+        self.pose = np.zeros(6)
+        self.img = None
 
     def receive_message(self):
         robot = robot_msg_pb2.Robot()
         robot.ParseFromString(self.subscriber.recv())
 
+        self.timestamp = robot.timestamp
         self.joint_angles = np.array(robot.joint_angles).flatten()
-        self.joint_velocities = np.array(robot.joint_velocities).flatten()
-        self.tcp_pose = np.array(robot.tcp_pose).flatten()
-
-        self.color_image = cv2.cvtColor(
-            cv2.imdecode(np.frombuffer(robot.color_image, np.uint8), cv2.IMREAD_COLOR),
+        self.pose = np.array(robot.pose).flatten()
+        self.img = cv2.cvtColor(
+            cv2.imdecode(np.frombuffer(robot.img, np.uint8), cv2.IMREAD_COLOR),
             cv2.COLOR_BGR2RGB,
         )
-        self.color_position = np.array(robot.color_extrinsics).flatten()
-
-
-class SkillPublisher:
-    def __init__(self, address: str):
-        self.context = zmq.Context()
-        self.publisher = self.context.socket(zmq.PUB)
-        self.publisher.bind(address)
-        self.skill = skill_pb2.Skill()
-
-    def publish_message(self, skill_list: list[int]):
-        self.skill.skill[:] = skill_list
-        self.publisher.send(self.skill.SerializeToString())
 
 
 class RobotVis:
-    def __init__(self, cam_dict: dict[str, dict[str, str]]):
+    def __init__(self, cam_dict: dict[str, dict[str, str]], robot: str = "finger"):
         self.prev_joint_origins = None
         self.cam_dict = cam_dict
+        self.robot = robot
 
     def log_robot_states(
         self,
@@ -104,13 +110,6 @@ class RobotVis:
         color_position: dict[str, np.ndarray],
         color_intrinsics: dict[str, np.ndarray],
     ):
-        rot_z_mat = np.array(
-            [
-                [-1, 0, 0],
-                [0, -1, 0],
-                [0, 0, 1],
-            ]
-        )
         for cam in self.cam_dict.keys():
             color_extrinsic = color_position[cam]
             color_intrinsic = color_intrinsics[cam]
@@ -125,25 +124,28 @@ class RobotVis:
                 rr.log(
                     f"/cameras/{cam}/color",
                     rr.Transform3D(
-                        translation=np.dot(rot_z_mat, np.array(color_extrinsic[:3])),
-                        mat3x3=np.dot(
-                            rot_z_mat,
-                            Rotation.from_euler(
-                                "xyz", np.array(color_extrinsic[3:])
-                            ).as_matrix(),
-                        ),
+                        translation=np.array(color_extrinsic[:3]),
+                        mat3x3=Rotation.from_euler(
+                            "xyz", np.array(color_extrinsic[3:])
+                        ).as_matrix(),
                     ),
                 )
                 rr.log(f"/cameras/{cam}/color", rr.Image(color_img))
 
+    def log_finger(
+        self,
+        pose: np.ndarray,
+    ):
+        rr.log("/finger/pose", rr.Transform3D(translation=pose[:3], mat3x3=Rotation.from_euler("xyz", pose[3:]).as_matrix()))
+
     def log_action_dict(
         self,
-        tcp_pose: np.ndarray = np.array([0, 0, 0, 0, 0, 0]),
+        pose: np.ndarray = np.array([0, 0, 0, 0, 0, 0]),
         joint_velocities: np.ndarray = np.array([0, 0, 0, 0, 0, 0]),
     ):
 
-        for i, val in enumerate(tcp_pose):
-            rr.log(f"/action_dict/tcp_pose/{i}", rr.Scalar(val))
+        for i, val in enumerate(pose):
+            rr.log(f"/action_dict/pose/{i}", rr.Scalar(val))
 
         for i, vel in enumerate(joint_velocities):
             rr.log(f"/action_dict/joint_velocity/{i}", rr.Scalar(vel))
@@ -151,13 +153,19 @@ class RobotVis:
     def run(
         self,
         record_state,
-        entity_to_transform: dict[str, tuple[np.ndarray, np.ndarray]],
+        robot,
+        entity_to_transform=None,
     ):
         with open("../config/address.yaml", "r") as f:
-            address = yaml.load(f.read(), Loader=yaml.Loader)["robot_state"]
-        subscriber = RobotSubscriber(address=address)
+            address = yaml.load(f.read(), Loader=yaml.Loader)
+        
+        if robot =="finger":
+            subscriber = FingerSubscriber(address=address["finger"])
+        left_finger_subscriber = FingerSubscriber(address=address["left_finger"])
+        right_finger_subscriber = FingerSubscriber(address=address["right_finger"])
+        robot_subscriber = RobotSubscriber(address=address["robot"])
 
-        joint_angles = np.array([90, -70, 110, -130, -90, 0]) / 180 * np.pi
+        joint_angles = np.zeros(6)
         self.log_robot_states(joint_angles, entity_to_transform)
         color_intrinsics = {
             cam: cam_intr_to_mat(self.cam_dict[cam]["color_intrinsics"])
@@ -166,24 +174,22 @@ class RobotVis:
         recording = False
         time_list = []
         joint_angles_list = []
-        joint_velocities_list = []
-        tcp_pose_list = []
+        pose_list = []
         color_position_list = []
         count = 0
         while True:
             subscriber.receive_message()
             joint_angles = subscriber.joint_angles
-            joint_velocities = subscriber.joint_velocities
-            tcp_pose = subscriber.tcp_pose
-            color_image = subscriber.color_image
+            pose = subscriber.pose
+            img = subscriber.img
             color_position = subscriber.color_position
             self.log_robot_states(joint_angles, entity_to_transform)
             self.log_camera(
-                color_imgs={cam: color_image for cam in self.cam_dict},
+                color_imgs={cam: img for cam in self.cam_dict},
                 color_position={cam: color_position for cam in self.cam_dict},
                 color_intrinsics=color_intrinsics,
             )
-            self.log_action_dict(tcp_pose=tcp_pose, joint_velocities=joint_velocities)
+            self.log_action_dict(pose=pose, joint_velocities=joint_velocities)
             if record_state.value == 1:
                 if recording == False:
                     start_time = time.time()
@@ -194,11 +200,11 @@ class RobotVis:
                 time_list.append(time.time() - start_time)
                 joint_angles_list.append(joint_angles)
                 joint_velocities_list.append(joint_velocities)
-                tcp_pose_list.append(tcp_pose)
+                pose_list.append(pose)
                 color_position_list.append(color_position)
                 cv2.imwrite(
                     os.path.join(save_path, f"color_img/frame_{count}.png"),
-                    cv2.cvtColor(color_image, cv2.COLOR_RGB2BGR),
+                    cv2.cvtColor(img, cv2.COLOR_RGB2BGR),
                 )
                 count += 1
                 print(f"Saving, fps: {count/(time.time() - start_time)}", end="\r")
@@ -224,8 +230,8 @@ class RobotVis:
                         fmt="%.6f",
                     )
                     np.savetxt(
-                        os.path.join(save_path, "tcp_pose.csv"),
-                        tcp_pose_list,
+                        os.path.join(save_path, "pose.csv"),
+                        pose_list,
                         delimiter=",",
                         fmt="%.6f",
                     )
@@ -239,7 +245,7 @@ class RobotVis:
                     time_list = []
                     joint_angles_list = []
                     joint_velocities_list = []
-                    tcp_pose_list = []
+                    pose_list = []
                     color_position_list = []
                     count = 0
 
@@ -248,8 +254,8 @@ class RobotVis:
         time_list,
         joint_angles_list,
         joint_velocities_list,
-        tcp_pose_list,
-        color_image_list,
+        pose_list,
+        img_list,
         color_position_list,
         entity_to_transform: dict[str, tuple[np.ndarray, np.ndarray]],
     ):
@@ -264,14 +270,14 @@ class RobotVis:
             if (time.time() - start_time) > time_list[frame]:
                 self.log_robot_states(joint_angles_list[frame], entity_to_transform)
                 self.log_camera(
-                    color_imgs={cam: color_image_list[frame] for cam in self.cam_dict},
+                    color_imgs={cam: img_list[frame] for cam in self.cam_dict},
                     color_position={
                         cam: color_position_list[frame] for cam in self.cam_dict
                     },
                     color_intrinsics=color_intrinsics,
                 )
                 self.log_action_dict(
-                    tcp_pose=tcp_pose_list[frame],
+                    pose=pose_list[frame],
                     joint_velocities=joint_velocities_list[frame],
                 )
 
@@ -280,7 +286,7 @@ class RobotVis:
                 if frame == len(time_list):
                     return
 
-    def blueprint(self):
+    def blueprint(self, robot: str = "finger"):
         from rerun.blueprint import (
             Blueprint,
             Horizontal,
@@ -314,7 +320,7 @@ class RobotVis:
                         ),
                         Vertical(
                             *(
-                                TimeSeriesView(origin=f"/action_dict/tcp_pose/{i}")
+                                TimeSeriesView(origin=f"/action_dict/pose/{i}")
                                 for i in range(6)
                             ),
                             name="tcp pose",
@@ -331,6 +337,7 @@ class RobotVis:
 
 def rerun_log(
     cam_dict: dict,
+    robot: str,
     robot_urdf: str,
     data_path: str,
 ):
@@ -342,11 +349,11 @@ def rerun_log(
     joint_velocities_list = np.loadtxt(
         os.path.join(data_path, "joint_velocities.csv"), delimiter=","
     )
-    tcp_pose_list = np.loadtxt(os.path.join(data_path, "tcp_pose.csv"), delimiter=",")
-    color_image_path = os.path.join(data_path, "color_img")
-    color_image_list = [
+    pose_list = np.loadtxt(os.path.join(data_path, "pose.csv"), delimiter=",")
+    img_path = os.path.join(data_path, "color_img")
+    img_list = [
         cv2.cvtColor(
-            cv2.imread(os.path.join(color_image_path, f"frame_{i}.png")),
+            cv2.imread(os.path.join(img_path, f"frame_{i}.png")),
             cv2.COLOR_BGR2RGB,
         )
         for i in range(joint_angles_list.shape[0])
@@ -368,8 +375,8 @@ def rerun_log(
         time_list=time_list,
         joint_angles_list=joint_angles_list,
         joint_velocities_list=joint_velocities_list,
-        tcp_pose_list=tcp_pose_list,
-        color_image_list=color_image_list,
+        pose_list=pose_list,
+        img_list=img_list,
         color_position_list=color_position_list,
         entity_to_transform=urdf_logger.entity_to_transform,
     )
@@ -378,15 +385,18 @@ def rerun_log(
 def rerun_server(
     record_state,
     cam_dict: dict,
+    robot: str,
     robot_urdf: str,
 ):
-    urdf_logger = URDFLogger(filepath=robot_urdf)
-    robot_vis = RobotVis(cam_dict=cam_dict)
+    robot_vis = RobotVis(cam_dict=cam_dict, robot=robot)
 
     rr.init("Robot Interface")
-    rr.serve(open_browser=False, ws_port=4321, web_port=8000)
-    rr.send_blueprint(robot_vis.blueprint())
+    rr.serve_web(open_browser=False, ws_port=4321, web_port=8000)
+    rr.send_blueprint(robot_vis.blueprint(robot))
 
+    if robot == "finger":
+        robot_vis.run(record_state, robot)
+    urdf_logger = URDFLogger(filepath=robot_urdf)
     urdf_logger.log()
 
     robot_vis.run(record_state, urdf_logger.entity_to_transform)
@@ -403,38 +413,6 @@ def web_server(
     with server_class((bind, port), handler_class) as httpd:
         print(f"Serving HTTP on {bind} port {port} " f"(http://{bind}:{port}/) ...")
         httpd.serve_forever()
-
-
-def skill_listener(
-    action_dict: dict,
-    bind: str = "localhost",
-    port: int = 4322,
-):
-    with open("../config/address.yaml", "r") as f:
-        address = yaml.load(f.read(), Loader=yaml.Loader)["robot_skill"]
-    skill_publisher = SkillPublisher(address=address)
-
-    async def echo(websocket, path):
-        async for message in websocket:
-            msg_list = ast.literal_eval(message)
-            msg_dict = {}
-            for i, msg in enumerate(msg_list):
-                msg_dict[f"command_{i}"] = {
-                    "id": msg["node"],
-                    "skill": action_dict[str(msg["node"])],
-                }
-            print(f"receive message: {msg_dict}")
-            skill_publisher.publish_message(
-                skill_list=[msg_list[i]["node"] for i in range(len(msg_list))]
-            )
-            with open("../temp/skill_list.yaml", "w") as f:
-                f.write(yaml.dump(msg_dict))
-            await websocket.send(f"Echo: {message}")
-
-    start_server = websockets.serve(echo, bind, port)
-
-    asyncio.get_event_loop().run_until_complete(start_server)
-    asyncio.get_event_loop().run_forever()
 
 
 def record_listener(
@@ -458,8 +436,7 @@ def record_listener(
 
 
 def main(
-    skill_dict: str,
-    robot: str = "ur10e_hande",
+    robot: str = "finger",
     mode: str = "real-time",
     data_folder: str = "",
     server_class=DualStackServer,
@@ -480,15 +457,10 @@ def main(
 
     cam_dict = yaml.load(open("../config/camera.yaml"), Loader=yaml.FullLoader)
 
-    robot_urdf_dict = {
-        "panda": "franka_description/panda.urdf",
-        "panda_arg85": "franka_description/panda_arg85.urdf",
-        "panda_hande": "franka_description/panda_hande.urdf",
-        "panda_hande_d435i": "franka_description/panda_hande_d435i.urdf",
-        "ur10e": "ur_description/ur10e.urdf",
-        "ur10e_arg85": "ur_description/ur10e_arg85.urdf",
-        "ur10e_hande": "ur_description/ur10e_hande.urdf",
-        "ur10e_hande_d435i": "ur_description/ur10e_hande_d435i.urdf",
+    robot_dict = {
+        "finger": "finger",
+        "robotiq_arg85": "robotiq/arg85/arg85.urdf",
+        "fifish-v6": "fifish/v6/v6.urdf",
     }
 
     web_process.daemon = True
@@ -497,10 +469,6 @@ def main(
 
     if mode == "real-time":
         record_state = Value(ctypes.c_int, 0)
-
-        skill_process = Process(target=skill_listener, args=(skill_dict,))
-        skill_process.daemon = True
-        skill_process.start()
 
         record_process = Process(target=record_listener, args=(record_state,))
         record_process.daemon = True
@@ -511,7 +479,8 @@ def main(
             args=(
                 record_state,
                 cam_dict,
-                robot_urdf_dict[robot],
+                robot,
+                robot_dict[robot],
             ),
         )
         rerun_process.daemon = True
@@ -520,22 +489,20 @@ def main(
     elif mode == "log-data":
         data_path = os.path.join("../data/", data_folder)
         rerun_log(
-            cam_dict=cam_dict, robot_urdf=robot_urdf_dict[robot], data_path=data_path
+            cam_dict=cam_dict, robot=robot, robot_urdf=robot_dict[robot], data_path=data_path
         )
     else:
         raise ValueError("\033[91mINVALID MODE\033[0m")
 
 
 if __name__ == "__main__":
-    with open("../config/skill.yaml", "r") as f:
-        skill_dict = yaml.load(f.read(), Loader=yaml.Loader)
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "-m", "--mode", default="real-time", type=str, help="set the mode of interface"
     )
     parser.add_argument(
-        "-r", "--robot", default="ur10e_hande_d435i", type=str, help="select the robot"
+        "-r", "--robot", default="finger", type=str, help="select the robot"
     )
     parser.add_argument(
         "-d", "--data", default="", type=str, help="select the data to replay"
@@ -543,4 +510,4 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    main(skill_dict=skill_dict, robot=args.robot, mode=args.mode, data_folder=args.data)
+    main(robot=args.robot, mode=args.mode, data_folder=args.data)
