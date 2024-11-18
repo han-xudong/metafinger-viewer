@@ -29,11 +29,13 @@ from functools import partial
 from multiprocessing import Process, Value
 import rerun as rr
 
+
 def on_press(key):
     global stop_flag
     if key == keyboard.Key.esc:
         stop_flag = True
         return False
+
 
 class DualStackServer(ThreadingHTTPServer):
     def server_bind(self):
@@ -41,6 +43,7 @@ class DualStackServer(ThreadingHTTPServer):
         with contextlib.suppress(Exception):
             self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
         return super().server_bind()
+
 
 class FingerSubscriber:
     def __init__(self, address: str) -> None:
@@ -62,6 +65,7 @@ class FingerSubscriber:
             cv2.imdecode(np.frombuffer(finger.img, np.uint8), cv2.IMREAD_COLOR),
             cv2.COLOR_BGR2RGB,
         )
+
 
 class RobotSubscriber:
     def __init__(self, address: str) -> None:
@@ -113,8 +117,8 @@ class RobotVis:
     def log_camera(
         self,
         imgs: dict[str, np.ndarray],
-        color_position: dict[str, np.ndarray]={},
-        intrinsics: dict[str, np.ndarray]={},
+        color_position: dict[str, np.ndarray] = {},
+        intrinsics: dict[str, np.ndarray] = {},
     ):
         if color_position == {}:
             for cam in self.cam_dict.keys():
@@ -147,16 +151,23 @@ class RobotVis:
     def log_finger(
         self,
         pose: np.ndarray,
+        finger: str,
     ):
-        rr.log("/finger/pose", rr.Transform3D(translation=pose[:3], mat3x3=Rotation.from_euler("xyz", pose[3:]).as_matrix()))
+        rr.log(
+            "/finger/pose",
+            rr.Transform3D(
+                translation=pose[:3],
+                mat3x3=Rotation.from_euler("xyz", pose[3:]).as_matrix(),
+            ),
+        )
 
     def log_action_dict(
         self,
-        pose: np.ndarray = np.array([0, 0, 0, 0, 0, 0]),
+        pose_dict: dict[str, np.ndarray] = {},
     ):
-
-        for i, val in enumerate(pose):
-            rr.log(f"/action_dict/pose/{i}", rr.Scalar(val))
+        for key, val in pose_dict.items():
+            for i in range(6):
+                rr.log(f"/action_dict/{key}/{i}", val[i])
 
     def run(
         self,
@@ -165,8 +176,8 @@ class RobotVis:
     ):
         with open("../config/address.yaml", "r") as f:
             address = yaml.load(f.read(), Loader=yaml.Loader)
-        
-        if self.robot =="finger":
+
+        if self.robot == "finger":
             subscriber = FingerSubscriber(address=address["finger"])
 
             intrinsics = {
@@ -181,17 +192,20 @@ class RobotVis:
                 subscriber.receive_message()
                 pose = subscriber.pose
                 img = subscriber.img
-                self.log_finger(pose)
+                self.log_finger(pose, "finger")
                 self.log_camera(
                     imgs={"finger": img},
                     intrinsics={"finger": intrinsics["left_finger"]},
                 )
-                self.log_action_dict(pose=pose)
+                self.log_action_dict(pose_dict={"pose": pose})
                 if record_state.value == 1:
                     if recording == False:
                         start_time = time.time()
                         recording = True
-                        save_path = os.path.join('../data/{}_'.format(self.robot), time.strftime("%Y%m%d-%H%M%S"))
+                        save_path = os.path.join(
+                            "../data/{}_".format(self.robot),
+                            time.strftime("%Y%m%d-%H%M%S"),
+                        )
                         os.makedirs(save_path)
                         os.makedirs(os.path.join(save_path, "img"))
                     time_list.append(time.time() - start_time)
@@ -228,7 +242,7 @@ class RobotVis:
 
             joint_angles = np.zeros(6)
             self.log_robot_states(joint_angles, entity_to_transform)
-        
+
             intrinsics = {
                 cam: cam_intr_to_mat(self.cam_dict[cam]["intrinsics"])
                 for cam in self.cam_dict.keys()
@@ -238,29 +252,50 @@ class RobotVis:
             joint_angles_list = []
             left_finger_pose_list = []
             right_finger_pose_list = []
-            pose_list = []
+            robot_pose_list = []
             count = 0
             while True:
-                subscriber.receive_message()
-                joint_angles = subscriber.joint_angles
-                pose = subscriber.pose
-                img = subscriber.img
+                left_finger_subscriber.receive_message()
+                right_finger_subscriber.receive_message()
+                robot_subscriber.receive_message()
+                left_finger_pose = left_finger_subscriber.pose
+                left_finger_img = left_finger_subscriber.img
+                right_finger_pose = right_finger_subscriber.pose
+                right_finger_img = right_finger_subscriber.img
+                joint_angles = robot_subscriber.joint_angles
+                robot_pose = robot_subscriber.pose
+                robot_img = robot_subscriber.img
                 self.log_robot_states(joint_angles, entity_to_transform)
+                self.log_finger(left_finger_pose, "left_finger")
+                self.log_finger(right_finger_pose, "right_finger")
                 self.log_camera(
-                    imgs={cam: img for cam in self.cam_dict},
+                    imgs={
+                        "left_finger": left_finger_img,
+                        "right_finger": right_finger_img,
+                        "robot": robot_img,
+                    },
                     intrinsics=intrinsics,
                 )
-                self.log_action_dict(pose=pose)
+                self.log_action_dict(
+                    pose_dict={
+                        "left_finger_pose": left_finger_pose,
+                        "right_finger_pose": right_finger_pose,
+                        "robot_pose": robot_pose,
+                    }
+                )
                 if record_state.value == 1:
                     if recording == False:
                         start_time = time.time()
                         recording = True
-                        save_path = os.path.join('../data/{}_'.format(self.robot), time.strftime("%Y%m%d-%H%M%S"))
+                        save_path = os.path.join(
+                            "../data/{}_".format(self.robot),
+                            time.strftime("%Y%m%d-%H%M%S"),
+                        )
                         os.makedirs(save_path)
                         os.makedirs(os.path.join(save_path, "img"))
                     time_list.append(time.time() - start_time)
                     joint_angles_list.append(joint_angles)
-                    pose_list.append(pose)
+                    robot_pose_list.append(pose)
                     cv2.imwrite(
                         os.path.join(save_path, f"img/{count}.jpg"),
                         cv2.cvtColor(img, cv2.COLOR_RGB2BGR),
@@ -283,21 +318,15 @@ class RobotVis:
                             fmt="%.6f",
                         )
                         np.savetxt(
-                            os.path.join(save_path, "pose.csv"),
-                            pose_list,
-                            delimiter=",",
-                            fmt="%.6f",
-                        )
-                        np.savetxt(
-                            os.path.join(save_path, "color_position.csv"),
-                            color_position_list,
+                            os.path.join(save_path, "robot_pose.csv"),
+                            robot_pose_list,
                             delimiter=",",
                             fmt="%.6f",
                         )
                         print(f"Data saved to {save_path}")
                         time_list = []
                         joint_angles_list = []
-                        pose_list = []
+                        robot_pose_list = []
                         color_position_list = []
                         count = 0
 
@@ -546,7 +575,10 @@ def main(
     elif mode == "log-data":
         data_path = os.path.join("../data/", data_folder)
         rerun_log(
-            cam_dict=cam_dict, robot=robot, robot_urdf=robot_dict[robot], data_path=data_path
+            cam_dict=cam_dict,
+            robot=robot,
+            robot_urdf=robot_dict[robot],
+            data_path=data_path,
         )
     else:
         raise ValueError("\033[91mINVALID MODE\033[0m")
