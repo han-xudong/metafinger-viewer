@@ -15,12 +15,12 @@ pip install -r requirements.txt
 Run the viewer:
 
 ```bash
-python viewer.py
+python server.py
 ```
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License (see [LICENSE](LICENSE) for details).
 
 ## Acknowledgments
 
