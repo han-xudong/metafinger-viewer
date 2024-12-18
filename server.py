@@ -176,7 +176,7 @@ class RobotVis:
         node: np.ndarray,
         name: str,
         cmin: float = 0.0,
-        cmax: float = 12.0,
+        cmax: float = 10.0,
     ):
         rr.log(
             f"{name}/mesh",
@@ -201,8 +201,8 @@ class RobotVis:
         action_dict: dict[str, np.ndarray] = {},
     ):
         for key, val in action_dict.items():
-            for i in range(len(val)):
-                rr.log(f"/{key}/{i}", val[i])
+            for i in range(val.shape[0]):
+                rr.log(f"/{key}/{i}", rr.Scalar(val[i]))
 
     def run(
         self,
@@ -343,14 +343,14 @@ class RobotVis:
                                 TimeSeriesView(origin=f"/finger/pose/{i}")
                                 for i in range(6)
                             ),
-                            name="tcp pose",
+                            name="pose",
                         ),
                         Vertical(
                             *(
                                 TimeSeriesView(origin=f"/finger/force/{i}")
                                 for i in range(6)
                             ),
-                            name="joint velocity",
+                            name="force",
                         ),
                         column_shares=[1, 1],
                     ),
@@ -486,7 +486,7 @@ def main(
     mode: str = "real-time",
     data_folder: str = "",
 ) -> None:
-    print("\033[91mPRESS ESC TO EXIT, AND STOP RECORDING DATA FIRST!!!\033[0m")
+    print("\033[91mPRESS ESC TO EXIT\033[0m")
 
     cam_dict = yaml.load(open("./config/camera.yaml"), Loader=yaml.FullLoader)
 
