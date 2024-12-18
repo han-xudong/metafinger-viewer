@@ -4,30 +4,26 @@ import os
 import argparse
 import time
 import yaml
-import ast
-import ctypes
-import socket
-import asyncio
-import websockets
-import webbrowser
-import contextlib
+import trimesh
 import zmq
 import cv2
 import numpy as np
+import matplotlib as mpl
 from pynput import keyboard
 from rerun_loader_urdf import URDFLogger
 from scipy.spatial.transform import Rotation
-from modules import cam_msg_pb2, robot_msg_pb2
+from modules import finger_msg_pb2, robot_msg_pb2
 from common import (
     log_angle_rot,
     blueprint_row_images,
     link_to_world_transform,
     cam_intr_to_mat,
 )
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from functools import partial
-from multiprocessing import Process, Value
+from multiprocessing import Process
 import rerun as rr
+
+global stop_flag
+stop_flag = False
 
 
 def on_press(key):
@@ -37,14 +33,6 @@ def on_press(key):
         return False
 
 
-class DualStackServer(ThreadingHTTPServer):
-    def server_bind(self):
-        # suppress exception when protocol is IPv4
-        with contextlib.suppress(Exception):
-            self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
-        return super().server_bind()
-
-
 class FingerSubscriber:
     def __init__(self, address: str) -> None:
         self.context = zmq.Context()
@@ -52,19 +40,23 @@ class FingerSubscriber:
         self.subscriber.connect(address)
         self.subscriber.setsockopt_string(zmq.SUBSCRIBE, "")
         self.timestamp = 0
-        self.pose = np.zeros(6)
         self.img = None
+        self.pose = np.zeros(6)
+        self.force = np.zeros(6)
+        self.node = None
 
     def receive_message(self):
-        finger = cam_msg_pb2.Finger()
+        finger = finger_msg_pb2.Finger()
         finger.ParseFromString(self.subscriber.recv())
 
         self.timestamp = finger.timestamp
-        self.pose = np.array(finger.pose).flatten()
         self.img = cv2.cvtColor(
             cv2.imdecode(np.frombuffer(finger.img, np.uint8), cv2.IMREAD_COLOR),
             cv2.COLOR_BGR2RGB,
         )
+        self.pose = np.array(finger.pose).flatten()
+        self.force = np.array(finger.force).flatten()
+        self.node = np.array(finger.node).flatten()
 
 
 class RobotSubscriber:
@@ -75,8 +67,14 @@ class RobotSubscriber:
         self.subscriber.setsockopt_string(zmq.SUBSCRIBE, "")
         self.timestamp = 0
         self.joint_angles = np.zeros(6)
-        self.pose = np.zeros(6)
-        self.img = None
+        self.img_1 = None
+        self.pose_1 = np.zeros(6)
+        self.force_1 = np.zeros(6)
+        self.node_1 = None
+        self.img_2 = None
+        self.pose_2 = np.zeros(6)
+        self.force_2 = np.zeros(6)
+        self.node_2 = None
 
     def receive_message(self):
         robot = robot_msg_pb2.Robot()
@@ -84,11 +82,20 @@ class RobotSubscriber:
 
         self.timestamp = robot.timestamp
         self.joint_angles = np.array(robot.joint_angles).flatten()
-        self.pose = np.array(robot.pose).flatten()
-        self.img = cv2.cvtColor(
-            cv2.imdecode(np.frombuffer(robot.img, np.uint8), cv2.IMREAD_COLOR),
+        self.img_1 = cv2.cvtColor(
+            cv2.imdecode(np.frombuffer(robot.img_1, np.uint8), cv2.IMREAD_COLOR),
             cv2.COLOR_BGR2RGB,
         )
+        self.pose_1 = np.array(robot.pose_1).flatten()
+        self.force_1 = np.array(robot.force_1).flatten()
+        self.node_1 = np.array(robot.node_1).flatten()
+        self.img_2 = cv2.cvtColor(
+            cv2.imdecode(np.frombuffer(robot.img_2, np.uint8), cv2.IMREAD_COLOR),
+            cv2.COLOR_BGR2RGB,
+        )
+        self.pose_2 = np.array(robot.pose_2).flatten()
+        self.force_2 = np.array(robot.force_2).flatten()
+        self.node_2 = np.array(robot.node_2).flatten()
 
 
 class RobotVis:
@@ -96,6 +103,23 @@ class RobotVis:
         self.prev_joint_origins = None
         self.cam_dict = cam_dict
         self.robot = robot
+
+        finger_vertices = np.loadtxt("./modules/finger/surf_coor.txt", delimiter=",")
+        finger_faces = (
+            np.loadtxt("./modules/finger/surf_tri.txt", delimiter=",").astype(int) - 1
+        )
+        self.finger_mesh = trimesh.Trimesh(vertices=finger_vertices, faces=finger_faces)
+        self.finger_node_num = len(self.finger_mesh.vertices)
+        self.finger_def_node = np.loadtxt(
+            "./modules/finger/def_node.txt", delimiter=","
+        )
+        self.finger_colormap = mpl.colormaps["viridis"].colors
+
+        if robot == "finger":
+            self.log_finger(np.zeros(self.finger_node_num * 3), "finger")
+        else:
+            self.log_finger(np.zeros(self.finger_node_num * 3), "left_finger")
+            self.log_finger(np.zeros(self.finger_node_num * 3), "right_finger")
 
     def log_robot_states(
         self,
@@ -124,7 +148,7 @@ class RobotVis:
             for cam in self.cam_dict.keys():
                 img = imgs[cam]
                 if img is not None:
-                    rr.log(f"/cameras/{cam}/color", rr.Image(img))
+                    rr.log(f"/{cam}/camera/color", rr.Image(img))
         else:
             for cam in self.cam_dict.keys():
                 color_extrinsic = color_position[cam]
@@ -132,13 +156,13 @@ class RobotVis:
                 img = imgs[cam]
                 if img is not None:
                     rr.log(
-                        f"/cameras/{cam}/color",
+                        f"/{cam}/camera/color",
                         rr.Pinhole(
                             image_from_camera=color_intrinsic,
                         ),
                     )
                     rr.log(
-                        f"/cameras/{cam}/color",
+                        f"/{cam}/camera/color",
                         rr.Transform3D(
                             translation=np.array(color_extrinsic[:3]),
                             mat3x3=Rotation.from_euler(
@@ -146,128 +170,100 @@ class RobotVis:
                             ).as_matrix(),
                         ),
                     )
-                    rr.log(f"/cameras/{cam}/color", rr.Image(img))
+                    rr.log(f"/{cam}/camera/color", rr.Image(img))
 
     def log_finger(
         self,
-        pose: np.ndarray,
-        finger: str,
+        node: np.ndarray,
+        name: str,
+        cmin: float = 0.0,
+        cmax: float = 12.0,
     ):
+        node = node.reshape(-1, 3)
         rr.log(
-            "/finger/pose",
-            rr.Transform3D(
-                translation=pose[:3],
-                mat3x3=Rotation.from_euler("xyz", pose[3:]).as_matrix(),
+            f"/{name}/mesh",
+            rr.Mesh3D(
+                vertex_positions=self.finger_mesh.vertices + node,
+                triangle_indices=self.finger_mesh.faces,
+                vertex_colors=[
+                    self.finger_colormap[i]
+                    for i in (
+                        (np.clip(np.linalg.norm(node, axis=1), cmin, cmax) - cmin)
+                        / (cmax - cmin)
+                        * (len(self.finger_colormap) - 1)
+                    )
+                    .astype(int)
+                    .tolist()
+                ],
             ),
         )
 
     def log_action_dict(
         self,
-        pose_dict: dict[str, np.ndarray] = {},
+        action_dict: dict[str, np.ndarray] = {},
     ):
-        for key, val in pose_dict.items():
-            for i in range(6):
-                rr.log(f"/action_dict/{key}/{i}", val[i])
+        for key, val in action_dict.items():
+            for i in range(len(val)):
+                rr.log(f"/{key}/{i}", val[i])
 
     def run(
         self,
-        record_state,
         entity_to_transform=None,
     ):
-        with open("../config/address.yaml", "r") as f:
-            address = yaml.load(f.read(), Loader=yaml.Loader)
+        with open("./config/address.yaml", "r") as f:
+            address = yaml.load(f.read(), Loader=yaml.FullLoader)
 
         if self.robot == "finger":
-            subscriber = FingerSubscriber(address=address["finger"])
-
+            subscriber = FingerSubscriber(
+                address=str(address["finger"]["ip"] + ":" + address["finger"]["port"])
+            )
             intrinsics = {
                 cam: cam_intr_to_mat(self.cam_dict[cam]["intrinsics"])
                 for cam in self.cam_dict.keys()
             }
-            recording = False
-            time_list = []
-            finger_pose_list = []
-            count = 0
             while True:
                 subscriber.receive_message()
                 pose = subscriber.pose
                 img = subscriber.img
-                self.log_finger(pose, "finger")
+                force = subscriber.force
+                node = np.zeros(self.finger_node_num * 3)
+                node[self.finger_def_node] += subscriber.node
+                self.log_finger(node, "finger")
                 self.log_camera(
                     imgs={"finger": img},
-                    intrinsics={"finger": intrinsics["left_finger"]},
+                    intrinsics={"finger": intrinsics["finger"]},
                 )
-                self.log_action_dict(pose_dict={"pose": pose})
-                if record_state.value == 1:
-                    if recording == False:
-                        start_time = time.time()
-                        recording = True
-                        save_path = os.path.join(
-                            "../data/{}_".format(self.robot),
-                            time.strftime("%Y%m%d-%H%M%S"),
-                        )
-                        os.makedirs(save_path)
-                        os.makedirs(os.path.join(save_path, "img"))
-                    time_list.append(time.time() - start_time)
-                    finger_pose_list.append(pose)
-                    cv2.imwrite(
-                        os.path.join(save_path, f"img/{count}.jpg"),
-                        cv2.cvtColor(img, cv2.COLOR_RGB2BGR),
-                    )
-                    count += 1
-                    print(f"Saving, fps: {count/(time.time() - start_time)}", end="\r")
-                else:
-                    if recording == True:
-                        recording = False
-                        np.savetxt(
-                            os.path.join(save_path, "time.csv"),
-                            time_list,
-                            delimiter=",",
-                            fmt="%.6f",
-                        )
-                        np.savetxt(
-                            os.path.join(save_path, "pose.csv"),
-                            finger_pose_list,
-                            delimiter=",",
-                            fmt="%.6f",
-                        )
-                        print(f"Data saved to {save_path}")
-                        time_list = []
-                        finger_pose_list = []
-                        count = 0
+                self.log_action_dict(
+                    action_dict={"finger/pose": pose, "finger/force": force}
+                )
         else:
-            left_finger_subscriber = FingerSubscriber(address=address["left_finger"])
-            right_finger_subscriber = FingerSubscriber(address=address["right_finger"])
-            robot_subscriber = RobotSubscriber(address=address["robot"])
-
-            joint_angles = np.zeros(6)
+            subscriber = RobotSubscriber(
+                address=str(address["robot"]["ip"] + ":" + address["robot"]["port"])
+            )
+            joint_angles = np.array([0.1])
             self.log_robot_states(joint_angles, entity_to_transform)
-
             intrinsics = {
                 cam: cam_intr_to_mat(self.cam_dict[cam]["intrinsics"])
                 for cam in self.cam_dict.keys()
             }
-            recording = False
-            time_list = []
-            joint_angles_list = []
-            left_finger_pose_list = []
-            right_finger_pose_list = []
-            robot_pose_list = []
-            count = 0
             while True:
-                left_finger_subscriber.receive_message()
-                right_finger_subscriber.receive_message()
-                robot_subscriber.receive_message()
-                left_finger_pose = left_finger_subscriber.pose
-                left_finger_img = left_finger_subscriber.img
-                right_finger_pose = right_finger_subscriber.pose
-                right_finger_img = right_finger_subscriber.img
-                joint_angles = robot_subscriber.joint_angles
-                robot_pose = robot_subscriber.pose
-                robot_img = robot_subscriber.img
+                subscriber.receive_message()
+                left_finger_pose = subscriber.pose_1
+                left_finger_img = subscriber.img_1
+                left_finger_force = subscriber.force_1
+                left_finger_node = np.zeros(self.finger_node_num * 3)
+                left_finger_node[self.finger_def_node] += subscriber.node_1
+                right_finger_pose = subscriber.pose_2
+                right_finger_img = subscriber.img_2
+                right_finger_force = subscriber.force_2
+                right_finger_node = np.zeros(self.finger_node_num * 3)
+                right_finger_node[self.finger_def_node] += subscriber.node_2
+                joint_angles = subscriber.joint_angles
+                robot_pose = subscriber.pose
+                robot_img = subscriber.img
                 self.log_robot_states(joint_angles, entity_to_transform)
-                self.log_finger(left_finger_pose, "left_finger")
-                self.log_finger(right_finger_pose, "right_finger")
+                self.log_finger(left_finger_node, "left_finger")
+                self.log_finger(right_finger_node, "right_finger")
                 self.log_camera(
                     imgs={
                         "left_finger": left_finger_img,
@@ -277,80 +273,14 @@ class RobotVis:
                     intrinsics=intrinsics,
                 )
                 self.log_action_dict(
-                    pose_dict={
-                        "left_finger_pose": left_finger_pose,
-                        "right_finger_pose": right_finger_pose,
-                        "robot_pose": robot_pose,
+                    action_dict={
+                        "left_finger/pose": left_finger_pose,
+                        "left_finger/force": left_finger_force,
+                        "right_finger/pose": right_finger_pose,
+                        "right_finger/force": right_finger_force,
+                        "robot/pose": robot_pose,
                     }
                 )
-                if record_state.value == 1:
-                    if recording == False:
-                        start_time = time.time()
-                        recording = True
-                        save_path = os.path.join(
-                            "../data/{}_".format(self.robot),
-                            time.strftime("%Y%m%d-%H%M%S"),
-                        )
-                        os.makedirs(save_path)
-                        os.makedirs(os.path.join(save_path, "left_finger_img"))
-                        os.makedirs(os.path.join(save_path, "right_finger_img"))
-                        os.makedirs(os.path.join(save_path, "robot_img"))
-                    time_list.append(time.time() - start_time)
-                    joint_angles_list.append(joint_angles)
-                    robot_pose_list.append(pose)
-                    cv2.imwrite(
-                        os.path.join(save_path, f"left_finger_img/{count}.jpg"),
-                        cv2.cvtColor(left_finger_img, cv2.COLOR_RGB2BGR),
-                    )
-                    cv2.imwrite(
-                        os.path.join(save_path, f"right_finger_img/{count}.jpg"),
-                        cv2.cvtColor(right_finger_img, cv2.COLOR_RGB2BGR),
-                    )
-                    cv2.imwrite(
-                        os.path.join(save_path, f"robot_img/{count}.jpg"),
-                        cv2.cvtColor(robot_img, cv2.COLOR_RGB2BGR),
-                    )
-                    count += 1
-                    print(f"Saving, fps: {count/(time.time() - start_time)}", end="\r")
-                else:
-                    if recording == True:
-                        recording = False
-                        np.savetxt(
-                            os.path.join(save_path, "time.csv"),
-                            time_list,
-                            delimiter=",",
-                            fmt="%.6f",
-                        )
-                        np.savetxt(
-                            os.path.join(save_path, "joint_angles.csv"),
-                            joint_angles_list,
-                            delimiter=",",
-                            fmt="%.6f",
-                        )
-                        np.savetxt(
-                            os.path.join(save_path, "left_finger_pose.csv"),
-                            left_finger_pose_list,
-                            delimiter=",",
-                            fmt="%.6f",
-                        )
-                        np.savetxt(
-                            os.path.join(save_path, "right_finger_pose.csv"),
-                            right_finger_pose_list,
-                            delimiter=",",
-                            fmt="%.6f",
-                        )
-                        np.savetxt(
-                            os.path.join(save_path, "robot_pose.csv"),
-                            robot_pose_list,
-                            delimiter=",",
-                            fmt="%.6f",
-                        )
-                        print(f"Data saved to {save_path}")
-                        time_list = []
-                        joint_angles_list = []
-                        robot_pose_list = []
-                        color_position_list = []
-                        count = 0
 
     def log(
         self,
@@ -401,41 +331,92 @@ class RobotVis:
             TimePanel,
         )
 
-        return Blueprint(
-            Horizontal(
-                Vertical(
-                    Spatial3DView(name="3D Scene", origin="/", contents=["/**"]),
-                    blueprint_row_images(
-                        [f"/cameras/{cam}/color" for cam in self.cam_dict.keys()]
+        if robot == "finger":
+            return Blueprint(
+                Horizontal(
+                    Vertical(
+                        Spatial3DView(name="3D Scene", origin="/", contents=["/**"]),
+                        blueprint_row_images(["/finger/camera/color"]),
+                        row_shares=[2, 1],
                     ),
-                    row_shares=[3, 1],
-                ),
-                Vertical(
-                    Tabs(
+                    Horizontal(
                         Vertical(
                             *(
-                                TimeSeriesView(
-                                    origin=f"/action_dict/joint_velocity/{i}"
-                                )
-                                for i in range(6)
-                            ),
-                            name="joint velocity",
-                        ),
-                        Vertical(
-                            *(
-                                TimeSeriesView(origin=f"/action_dict/pose/{i}")
+                                TimeSeriesView(origin=f"/finger/pose/{i}")
                                 for i in range(6)
                             ),
                             name="tcp pose",
                         ),
-                        active_tab=0,
+                        Vertical(
+                            *(
+                                TimeSeriesView(origin=f"/finger/force/{i}")
+                                for i in range(6)
+                            ),
+                            name="joint velocity",
+                        ),
+                        column_shares=[1, 1],
                     ),
+                    column_shares=[1, 1],
                 ),
-                column_shares=[3, 1],
-            ),
-            SelectionPanel(state="hidden"),
-            TimePanel(state="collapsed"),
-        )
+                SelectionPanel(state="hidden"),
+                TimePanel(state="collapsed"),
+            )
+
+        else:
+            return Blueprint(
+                Horizontal(
+                    Vertical(
+                        Spatial3DView(name="3D Scene", origin="/", contents=["/**"]),
+                        blueprint_row_images(
+                            [
+                                f"/{cam}/camera/color"
+                                for cam in ["left_finger", "robot", "right_finger"]
+                            ]
+                        ),
+                        row_shares=[3, 1],
+                    ),
+                    Horizontal(
+                        Tabs(
+                            Vertical(
+                                *(
+                                    TimeSeriesView(origin=f"/left_finger/pose/{i}")
+                                    for i in range(6)
+                                ),
+                                name="left finger pose",
+                            ),
+                            Vertical(
+                                *(
+                                    TimeSeriesView(origin=f"/left_finger/force/{i}")
+                                    for i in range(6)
+                                ),
+                                name="left finger force",
+                            ),
+                            active_tab=0,
+                        ),
+                        Tabs(
+                            Vertical(
+                                *(
+                                    TimeSeriesView(origin=f"/right_finger/pose/{i}")
+                                    for i in range(6)
+                                ),
+                                name="right finger pose",
+                            ),
+                            Vertical(
+                                *(
+                                    TimeSeriesView(origin=f"/right_finger/force/{i}")
+                                    for i in range(6)
+                                ),
+                                name="right finger force",
+                            ),
+                            active_tab=0,
+                        ),
+                        column_shares=[1, 1],
+                    ),
+                    column_shares=[1, 1],
+                ),
+                SelectionPanel(state="hidden"),
+                TimePanel(state="collapsed"),
+            )
 
 
 def rerun_log(
@@ -468,8 +449,7 @@ def rerun_log(
     urdf_logger = URDFLogger(filepath=robot_urdf)
     robot_vis = RobotVis(cam_dict=cam_dict)
 
-    rr.init("Robot Interface")
-    rr.serve(open_browser=False, ws_port=4321, web_port=8000)
+    rr.init("Robot Interface", spawn=True)
     rr.send_blueprint(robot_vis.blueprint())
 
     urdf_logger.log()
@@ -486,79 +466,31 @@ def rerun_log(
 
 
 def rerun_server(
-    record_state,
     cam_dict: dict,
     robot: str,
-    robot_urdf: str,
+    robot_path: str,
 ):
     robot_vis = RobotVis(cam_dict=cam_dict, robot=robot)
 
-    rr.init("Robot Interface")
-    rr.serve_web(open_browser=False, ws_port=4321, web_port=8000)
+    rr.init("Robot Interface", spawn=True)
     rr.send_blueprint(robot_vis.blueprint(robot))
 
     if robot == "finger":
-        robot_vis.run(record_state)
+        robot_vis.run()
     else:
-        urdf_logger = URDFLogger(filepath=robot_urdf)
+        urdf_logger = URDFLogger(filepath=robot_path, root_path="./modules/")
         urdf_logger.log()
-        robot_vis.run(record_state, urdf_logger.entity_to_transform)
-
-
-def web_server(
-    server_class=DualStackServer,
-    handler_class=SimpleHTTPRequestHandler,
-    bind: str = "127.0.0.1",
-    port: int = 8000,
-):
-    handler_class = partial(SimpleHTTPRequestHandler, directory=os.getcwd())
-
-    with server_class((bind, port), handler_class) as httpd:
-        print(f"Serving HTTP on {bind} port {port} " f"(http://{bind}:{port}/) ...")
-        httpd.serve_forever()
-
-
-def record_listener(
-    record_state,
-    bind: str = "localhost",
-    port: int = 4323,
-):
-    async def echo(websocket, path):
-        async for message in websocket:
-            print(f"receive message: {message}")
-            if message == "1":
-                record_state.value = 1
-            elif message == "0":
-                record_state.value = 0
-            await websocket.send(f"Echo: {message}")
-
-    start_server = websockets.serve(echo, bind, port)
-
-    asyncio.get_event_loop().run_until_complete(start_server)
-    asyncio.get_event_loop().run_forever()
+        robot_vis.run(urdf_logger.entity_to_transform)
 
 
 def main(
     robot: str = "finger",
     mode: str = "real-time",
     data_folder: str = "",
-    server_class=DualStackServer,
-    handler_class=SimpleHTTPRequestHandler,
-    bind: str = "127.0.0.1",
-    port: int = 8000,
 ) -> None:
-    web_process = Process(
-        target=web_server,
-        args=(
-            server_class,
-            handler_class,
-            bind,
-            port,
-        ),
-    )
     print("\033[91mPRESS ESC TO EXIT, AND STOP RECORDING DATA FIRST!!!\033[0m")
 
-    cam_dict = yaml.load(open("../config/camera.yaml"), Loader=yaml.FullLoader)
+    cam_dict = yaml.load(open("./config/camera.yaml"), Loader=yaml.FullLoader)
 
     robot_dict = {
         "finger": "finger",
@@ -566,21 +498,11 @@ def main(
         "fifish-v6": "fifish/v6/v6.urdf",
     }
 
-    web_process.daemon = True
-    web_process.start()
-    webbrowser.open(f"http://{bind}:{port}")
-
     if mode == "real-time":
-        record_state = Value(ctypes.c_int, 0)
-
-        record_process = Process(target=record_listener, args=(record_state,))
-        record_process.daemon = True
-        record_process.start()
 
         rerun_process = Process(
             target=rerun_server,
             args=(
-                record_state,
                 cam_dict,
                 robot,
                 robot_dict[robot],
@@ -589,13 +511,16 @@ def main(
         rerun_process.daemon = True
         rerun_process.start()
 
+        with keyboard.Listener(on_press=on_press) as listener:
+            listener.join()
+
         global stop_flag
         while True:
-            if stop_flag and record_state.value == 0:
+            if stop_flag == 1:
                 return
 
     elif mode == "log-data":
-        data_path = os.path.join("../data/", data_folder)
+        data_path = os.path.join("./data/", data_folder)
         rerun_log(
             cam_dict=cam_dict,
             robot=robot,

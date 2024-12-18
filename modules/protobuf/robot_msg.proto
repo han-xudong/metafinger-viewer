@@ -6,7 +6,15 @@ package Robot;
 message Robot
 {
     double timestamp = 1;
-    repeated double joint_angles = 2;
-    repeated double pose = 3;
-    bytes img = 4;
+    bytes img_1 = 2;
+    repeated double pose_1 = 3;
+    repeated double force_1 = 4;
+    repeated double node_1 = 5;
+    bytes img_2 = 6;
+    repeated double pose_2 = 7;
+    repeated double force_2 = 8;
+    repeated double node_2 = 9;
+    repeated double joint_angles = 10;
+    repeated double pose = 11;
+    bytes img = 12;
 }

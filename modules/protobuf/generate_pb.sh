@@ -1,1 +1,1 @@
-protoc --proto_path=. --python_out=. cam_msg.proto robot_msg.proto
+protoc --proto_path=. --python_out=. finger_msg.proto robot_msg.proto

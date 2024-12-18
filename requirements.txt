@@ -1,4 +1,5 @@
 future==1.0.0
+h5py==3.12.1
 jupyter==1.1.1
 markdown-it-py==3.0.0
 matplotlib==3.10.0

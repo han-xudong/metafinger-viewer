@@ -1,1 +1,1 @@
-from .protobuf import cam_msg_pb2, robot_msg_pb2
+from .protobuf import finger_msg_pb2, robot_msg_pb2

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import glob
 import pathlib
 from typing import Optional
 
@@ -19,10 +20,10 @@ class URDFLogger:
     """Class to log a URDF to Rerun."""
 
     def __init__(self, filepath: str, root_path: str = "") -> None:
-        self.urdf = urdf_parser.URDF.from_xml_file(filepath)
+        self.urdf = urdf_parser.URDF.from_xml_file(os.path.join(root_path, filepath))
         self.mat_name_to_mat = {mat.name: mat for mat in self.urdf.materials}
         self.entity_to_transform = {}
-        self.root_path = root_path
+        self.root_path = os.path.join(root_path, os.path.dirname(filepath))
 
     def link_entity_path(self, link: urdf_parser.Link) -> str:
         """Return the entity path for the URDF link."""
@@ -99,7 +100,7 @@ class URDFLogger:
         if isinstance(visual.geometry, urdf_parser.Mesh):
             resolved_path = resolve_ros_path(visual.geometry.filename)
             mesh_scale = visual.geometry.scale
-            mesh_or_scene = trimesh.load_mesh(resolved_path)
+            mesh_or_scene = trimesh.load_mesh(os.path.join(self.root_path, resolved_path))
             if mesh_scale is not None:
                 transform[:3, :3] *= mesh_scale
         elif isinstance(visual.geometry, urdf_parser.Box):

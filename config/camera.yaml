@@ -7,7 +7,7 @@ left_finger:
   fps: 30
   depth: false
   color: true
-  color_intrinsics: [919.606, 917.293, 665.883, 373.948]
+  intrinsics: [919.606, 917.293, 665.883, 373.948]
 right_finger:
   name: "right_finger"
   type: "monocular"
@@ -17,7 +17,7 @@ right_finger:
   fps: 30
   depth: false
   color: true
-  color_intrinsics: [919.606, 917.293, 665.883, 373.948]
+  intrinsics: [919.606, 917.293, 665.883, 373.948]
 robot:
   name: "robot"
   type: "monocular"
@@ -27,4 +27,14 @@ robot:
   fps: 30
   depth: false
   color: true
-  color_intrinsics: [919.606, 917.293, 665.883, 373.948]
+  intrinsics: [919.606, 917.293, 665.883, 373.948]
+finger:
+  name: "finger"
+  type: "monocular"
+  device: "raspberrypi"
+  width: 640
+  height: 360
+  fps: 30
+  depth: false
+  color: true
+  intrinsics: [919.606, 917.293, 665.883, 373.948]
