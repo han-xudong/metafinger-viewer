@@ -45,7 +45,7 @@ class FingerSubscriber:
         self.force = np.zeros(6)
         self.node = None
 
-    def receive_message(self):
+    def rec_msg(self):
         finger = finger_msg_pb2.Finger()
         finger.ParseFromString(self.subscriber.recv())
 
@@ -110,16 +110,14 @@ class RobotVis:
         )
         self.finger_mesh = trimesh.Trimesh(vertices=finger_vertices, faces=finger_faces)
         self.finger_node_num = len(self.finger_mesh.vertices)
-        self.finger_def_node = np.loadtxt(
-            "./modules/finger/def_node.txt", delimiter=","
-        )
+        self.finger_def_node = np.loadtxt("./modules/finger/def_node.txt", dtype=int)
         self.finger_colormap = mpl.colormaps["viridis"].colors
 
         if robot == "finger":
-            self.log_finger(np.zeros(self.finger_node_num * 3), "finger")
+            self.log_finger(np.zeros([self.finger_node_num, 3]), "finger")
         else:
-            self.log_finger(np.zeros(self.finger_node_num * 3), "left_finger")
-            self.log_finger(np.zeros(self.finger_node_num * 3), "right_finger")
+            self.log_finger(np.zeros([self.finger_node_num, 3]), "left_finger")
+            self.log_finger(np.zeros([self.finger_node_num, 3]), "right_finger")
 
     def log_robot_states(
         self,
@@ -144,25 +142,26 @@ class RobotVis:
         color_position: dict[str, np.ndarray] = {},
         intrinsics: dict[str, np.ndarray] = {},
     ):
+        cam_list = imgs.keys()
         if color_position == {}:
-            for cam in self.cam_dict.keys():
+            for cam in cam_list:
                 img = imgs[cam]
                 if img is not None:
-                    rr.log(f"/{cam}/camera/color", rr.Image(img))
+                    rr.log(f"{cam}/camera/color", rr.Image(img))
         else:
-            for cam in self.cam_dict.keys():
+            for cam in cam_list:
                 color_extrinsic = color_position[cam]
                 color_intrinsic = intrinsics[cam]
                 img = imgs[cam]
                 if img is not None:
                     rr.log(
-                        f"/{cam}/camera/color",
+                        f"{cam}/camera/color",
                         rr.Pinhole(
                             image_from_camera=color_intrinsic,
                         ),
                     )
                     rr.log(
-                        f"/{cam}/camera/color",
+                        f"{cam}/camera/color",
                         rr.Transform3D(
                             translation=np.array(color_extrinsic[:3]),
                             mat3x3=Rotation.from_euler(
@@ -170,7 +169,7 @@ class RobotVis:
                             ).as_matrix(),
                         ),
                     )
-                    rr.log(f"/{cam}/camera/color", rr.Image(img))
+                    rr.log(f"{cam}/camera/color", rr.Image(img))
 
     def log_finger(
         self,
@@ -179,9 +178,8 @@ class RobotVis:
         cmin: float = 0.0,
         cmax: float = 12.0,
     ):
-        node = node.reshape(-1, 3)
         rr.log(
-            f"/{name}/mesh",
+            f"{name}/mesh",
             rr.Mesh3D(
                 vertex_positions=self.finger_mesh.vertices + node,
                 triangle_indices=self.finger_mesh.faces,
@@ -215,19 +213,19 @@ class RobotVis:
 
         if self.robot == "finger":
             subscriber = FingerSubscriber(
-                address=str(address["finger"]["ip"] + ":" + address["finger"]["port"])
+                address=str(address["finger"]["ip"] + ":" + str(address["finger"]["port"]))
             )
             intrinsics = {
                 cam: cam_intr_to_mat(self.cam_dict[cam]["intrinsics"])
                 for cam in self.cam_dict.keys()
             }
             while True:
-                subscriber.receive_message()
+                subscriber.rec_msg()
                 pose = subscriber.pose
                 img = subscriber.img
                 force = subscriber.force
-                node = np.zeros(self.finger_node_num * 3)
-                node[self.finger_def_node] += subscriber.node
+                node = np.zeros([self.finger_node_num, 3])
+                node[self.finger_def_node - 1] += subscriber.node.reshape(-1, 3)
                 self.log_finger(node, "finger")
                 self.log_camera(
                     imgs={"finger": img},
@@ -238,7 +236,7 @@ class RobotVis:
                 )
         else:
             subscriber = RobotSubscriber(
-                address=str(address["robot"]["ip"] + ":" + address["robot"]["port"])
+                address=str(address["robot"]["ip"] + ":" + str(address["robot"]["port"]))
             )
             joint_angles = np.array([0.1])
             self.log_robot_states(joint_angles, entity_to_transform)
@@ -252,12 +250,12 @@ class RobotVis:
                 left_finger_img = subscriber.img_1
                 left_finger_force = subscriber.force_1
                 left_finger_node = np.zeros(self.finger_node_num * 3)
-                left_finger_node[self.finger_def_node] += subscriber.node_1
+                left_finger_node[self.finger_def_node - 1] += subscriber.node_1.reshape(-1, 3)
                 right_finger_pose = subscriber.pose_2
                 right_finger_img = subscriber.img_2
                 right_finger_force = subscriber.force_2
                 right_finger_node = np.zeros(self.finger_node_num * 3)
-                right_finger_node[self.finger_def_node] += subscriber.node_2
+                right_finger_node[self.finger_def_node - 1] += subscriber.node_2.reshape(-1, 3)
                 joint_angles = subscriber.joint_angles
                 robot_pose = subscriber.pose
                 robot_img = subscriber.img
@@ -446,10 +444,11 @@ def rerun_log(
         os.path.join(data_path, "color_position.csv"), delimiter=","
     )
 
+    rr.init("Robot Interface", spawn=True)
+
     urdf_logger = URDFLogger(filepath=robot_urdf)
     robot_vis = RobotVis(cam_dict=cam_dict)
 
-    rr.init("Robot Interface", spawn=True)
     rr.send_blueprint(robot_vis.blueprint())
 
     urdf_logger.log()
@@ -470,9 +469,8 @@ def rerun_server(
     robot: str,
     robot_path: str,
 ):
-    robot_vis = RobotVis(cam_dict=cam_dict, robot=robot)
-
     rr.init("Robot Interface", spawn=True)
+    robot_vis = RobotVis(cam_dict=cam_dict, robot=robot)
     rr.send_blueprint(robot_vis.blueprint(robot))
 
     if robot == "finger":
