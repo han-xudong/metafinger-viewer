@@ -1,6 +1,8 @@
 # Meta-Finger Viewer
 
-This is a viewer example for the [Meta-Finger](https://github.com/han-xudong/meta-finger).
+This is a viewer example for the [Meta-Finger](https://github.com/han-xudong/meta-finger). The viewer visualizes streams of multimodal data, including 3D scene of mesh, captured image, detected pose of marker, and estimated force.
+
+![Viewer](assets/viewer.jpg)
 
 ## Quick Start
 
@@ -25,3 +27,5 @@ This project is licensed under the MIT License (see [LICENSE](LICENSE) for detai
 ## Acknowledgments
 
 - [rerun](https://rerun.io): Visualize streams of multimodal data.
+- [ZeroMQ](https://zeromq.org): Communication between the viewer and the Meta-Finger.
+- [ProtoBuf](https://developers.google.com/protocol-buffers): Define the message format for the communication.
