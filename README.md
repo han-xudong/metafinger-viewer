@@ -16,11 +16,13 @@ cd meta-finger-viewer
 pip install -r requirements.txt
 ```
 
-Run the viewer:
+Note that the address of the Meta-Finger should be first set in `./config/address.yaml`, same as the address in the Meta-Finger. Then run the viewer:
 
 ```bash
 python server.py
 ```
+
+When the data of the finger is available, the viewer will show the streams of the data.
 
 ## License
 

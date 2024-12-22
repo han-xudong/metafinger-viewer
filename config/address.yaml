@@ -1,6 +1,2 @@
-robot: 
-  ip: "tcp://127.0.0.1"
-  port: 6666
-finger: 
-  ip: "tcp://127.0.0.1"
-  port: 6666
+ip: "tcp://127.0.0.1"
+port: 6666

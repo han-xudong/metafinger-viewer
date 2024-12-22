@@ -213,7 +213,7 @@ class RobotVis:
 
         if self.robot == "finger":
             subscriber = FingerSubscriber(
-                address=str(address["finger"]["ip"] + ":" + str(address["finger"]["port"]))
+                address=str(address["ip"] + ":" + str(address["port"]))
             )
             intrinsics = {
                 cam: cam_intr_to_mat(self.cam_dict[cam]["intrinsics"])
@@ -236,7 +236,7 @@ class RobotVis:
                 )
         else:
             subscriber = RobotSubscriber(
-                address=str(address["robot"]["ip"] + ":" + str(address["robot"]["port"]))
+                address=str(address["ip"] + ":" + str(address["port"]))
             )
             joint_angles = np.array([0.1])
             self.log_robot_states(joint_angles, entity_to_transform)
