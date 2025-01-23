@@ -37,7 +37,7 @@ class FingerSubscriber:
     def __init__(self, address: str) -> None:
         self.context = zmq.Context()
         self.subscriber = self.context.socket(zmq.SUB)
-        self.subscriber.connect(address)
+        self.subscriber.connect("tcp://" + address)
         self.subscriber.setsockopt_string(zmq.SUBSCRIBE, "")
         self.timestamp = 0
         self.img = None
@@ -63,7 +63,7 @@ class RobotSubscriber:
     def __init__(self, address: str) -> None:
         self.context = zmq.Context()
         self.subscriber = self.context.socket(zmq.SUB)
-        self.subscriber.connect(address)
+        self.subscriber.connect("tcp://" + address)
         self.subscriber.setsockopt_string(zmq.SUBSCRIBE, "")
         self.timestamp = 0
         self.joint_angles = np.zeros(6)
