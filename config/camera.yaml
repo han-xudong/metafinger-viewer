@@ -1,40 +1,39 @@
-left_finger:
-  name: "left_finger"
-  type: "monocular"
-  device: "raspberrypi"
-  width: 640
-  height: 360
-  fps: 30
-  depth: false
-  color: true
-  intrinsics: [919.606, 917.293, 665.883, 373.948]
-right_finger:
-  name: "right_finger"
-  type: "monocular"
-  device: "raspberrypi"
-  width: 640
-  height: 360
-  fps: 30
-  depth: false
-  color: true
-  intrinsics: [919.606, 917.293, 665.883, 373.948]
-robot:
-  name: "robot"
-  type: "monocular"
-  device: "usb"
-  width: 640
-  height: 360
-  fps: 30
-  depth: false
-  color: true
-  intrinsics: [919.606, 917.293, 665.883, 373.948]
-finger:
-  name: "finger"
-  type: "monocular"
-  device: "raspberrypi"
-  width: 640
-  height: 360
-  fps: 30
-  depth: false
-  color: true
-  intrinsics: [919.606, 917.293, 665.883, 373.948]
+mode: web
+ip: "10.252.206.1"
+port: 5555
+width: 320
+height: 240
+dist:
+  - - -0.146602
+    - 0.015541
+    - 0.000000
+    - 0.000000
+    - -0.004605
+mtx:
+  - - 181.203037
+    - 0.000000
+    - 165.322286
+  - - 0.000000
+    - 181.070824
+    - 106.557711
+  - - 0.000000
+    - 0.000000
+    - 1.000000
+filter_on: True
+filter_frame: 5
+marker_size: 0.012
+marker2global:
+  translation:
+    - 0.0
+    - 0.0
+    - -25.0
+  rotation:
+    - - 1.0
+      - 0.0
+      - 0.0
+    - - 0.0
+      - -1.0
+      - 0.0
+    - - 0.0
+      - 0.0
+      - -1.0
