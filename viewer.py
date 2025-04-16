@@ -81,7 +81,7 @@ class FingerVis:
         name: str,
         def_node: np.ndarray,
         cmin: float = 0.0,
-        cmax: float = 10.0,
+        cmax: float = 12.0,
     ) -> None:
         """Log the finger mesh.
         
