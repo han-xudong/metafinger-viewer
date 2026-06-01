@@ -1,0 +1,1 @@
+from .run import main as view_metafinger

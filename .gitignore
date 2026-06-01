@@ -173,5 +173,5 @@ cython_debug/
 # data
 data/
 
-# vscode
-.vscode/
+# protobuf files
+*_pb2.py

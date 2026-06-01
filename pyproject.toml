@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=42", "wheel", "grpcio-tools>=1.60.0", "protobuf==6.33.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "metafinger-viewer"
+version = "0.1.0"
+description = "MetaFinger viewer"
+authors = [
+    {name = "Xudong Han", email = "12231112@mail.sustech.edu.cn"}
+]
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "h5py==3.12.1",
+    "matplotlib==3.10.0",
+    "numpy==1.26.4",
+    "protobuf==6.33.0",
+    "opencv-contrib-python==4.10.0.84",
+    "opencv-python==4.10.0.84",
+    "pandas==2.2.3",
+    "pynput==1.7.7",
+    "pyyaml==6.0.2",
+    "pyzmq==26.2.0",
+    "rerun-sdk==0.20.0",
+    "scipy==1.14.1",
+    "tqdm==4.66.4",
+    "trimesh==4.5.2",
+    "tyro==1.0.3",
+    "urdf_parser_py==0.0.4"
+]
+
+[project.scripts]
+metafinger-viewer = "metafinger_viewer.cli:view_metafinger"
+
+[project.urls]
+"Homepage" = "https://github.com/han-xudong/metafinger-viewer"
+"Bug Tracker" = "https://github.com/han-xudong/metafinger-viewer/issues"
+
+[tool.setuptools]
+packages = ["metafinger_viewer"]
+
+[tool.black]
+line-length = 110
+target-version = ["py310"]
+
+[tool.isort]
+profile = "black"
+line-length = 110
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"

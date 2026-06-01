@@ -1,4 +1,0 @@
-ip: "127.0.0.1"
-port: 6666
-
-model_path: "lightning_logs/FingerNet/FingerNet.onnx"
