@@ -6,7 +6,7 @@ import sys
 
 class BuildPyWithProtobuf(build_py):
     def run(self):
-        proto_dir = Path(__file__).parent / "metafinger-viewer" / "modules" / "protobuf"
+        proto_dir = Path(__file__).parent / "metafinger_viewer" / "modules" / "protobuf"
         proto_files = list(proto_dir.glob("*.proto"))
 
         if proto_files:

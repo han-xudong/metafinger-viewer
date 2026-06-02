@@ -23,7 +23,7 @@ We use `uv` to manage Python dependencies. See [uv documentation](https://docs.a
 
 ```bash
 uv sync
-uv pip install -e .
+uv pip install .
 ```
 
 ## 🚀 Quick Start

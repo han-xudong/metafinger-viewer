@@ -74,12 +74,12 @@ class MetafingerVis:
         log_asset(
             log_path="metafinger_base",
             file_path=os.path.join(metafinger_base_dir, "metafinger_base.obj"),
-            translation=np.array([0, 0, -30]),
+            translation=np.array([0, 0, 0]),
             mat3x3=np.array(
                 [
-                    [-1, 0, 0],
-                    [0, 0, 1],
+                    [1, 0, 0],
                     [0, 1, 0],
+                    [0, 0, 1],
                 ]
             ),
             scale=10.0,
